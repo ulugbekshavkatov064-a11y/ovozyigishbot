@@ -282,21 +282,25 @@ async def vote_candidate(call: CallbackQuery, bot: Bot) -> None:
 
 
 # ======================= sovg'a sertifikati =======================
-ASK_NAME_TEXT = (
-    "🎁 <b>Tabriklaymiz!</b> Ovoz berganingiz uchun sizga <b>sovg'a sertifikati</b> beriladi.\n\n"
-    "Sertifikatga yozilishi uchun <b>ism va familiyangizni</b> yuboring.\n"
-    "<i>Masalan: Aliyev Jasur</i>"
-)
+def tg_display_name(user) -> str:
+    """Sertifikatga Telegramdagi ism-familiya yoziladi (bo'lmasa @username)."""
+    name = (user.full_name or "").strip()
+    if not name and user.username:
+        name = f"@{user.username}"
+    return name or f"ID {user.id}"
 
 
 async def offer_certificate(message: Message, user) -> None:
-    """Birinchi ovozdan keyin ism so'raladi (har bir odamga faqat 1 ta sertifikat)."""
+    """Birinchi ovozdan keyin darhol sertifikat beriladi (har bir odamga faqat 1 ta)."""
     cert = db.get_cert(user.id)
+    if cert is not None and cert["status"] == "issued":
+        return
     if cert is None:
         db.start_cert(user.id, user.full_name, user.username)
-        await message.answer(ASK_NAME_TEXT)
-    elif cert["status"] == "pending":
-        await message.answer(ASK_NAME_TEXT)
+    cert = db.issue_cert(user.id, tg_display_name(user), random.choice(settings.prizes))
+    log.info("Sertifikat berildi: %s %s -> %s", cert_no(cert), cert["full_name"], cert["prize"])
+    await message.answer("🎁 <b>Tabriklaymiz!</b> Ovoz berganingiz uchun sizga sovg'a sertifikati beriladi:")
+    await send_certificate(message, cert)
 
 
 def cert_date(cert) -> str:
@@ -327,7 +331,7 @@ async def my_certificate(message: Message) -> None:
     if cert is None:
         await message.answer(f"Sertifikat olish uchun avval «{BTN_VOTE}» orqali ovoz bering.")
     elif cert["status"] == "pending":
-        await message.answer(ASK_NAME_TEXT)
+        await offer_certificate(message, message.from_user)
     else:
         await send_certificate(message, cert)
 
@@ -446,7 +450,7 @@ async def cmd_certs(message: Message) -> None:
     issued = sum(1 for c in certs if c["status"] == "issued")
     await message.answer_document(
         BufferedInputFile(buf.read(), filename=f"sertifikatlar_{settings.now():%Y-%m-%d_%H-%M}.xlsx"),
-        caption=f"🎁 Berilgan sertifikatlar: <b>{issued}</b> ta (ism kutilmoqda: {len(certs) - issued})",
+        caption=f"🎁 Berilgan sertifikatlar: <b>{issued}</b> ta",
     )
 
 
@@ -524,22 +528,6 @@ async def bot_added(event: ChatMemberUpdated, bot: Bot) -> None:
             await bot.send_message(admin_id, text)
         except Exception:  # noqa: BLE001
             pass
-
-
-# Bu handler eng oxirida turishi kerak: faqat ism kutilayotgan foydalanuvchilar uchun ishlaydi
-@router.message(F.text, ~F.text.startswith("/"))
-async def receive_cert_name(message: Message) -> None:
-    cert = db.get_cert(message.from_user.id)
-    if cert is None or cert["status"] != "pending":
-        await message.answer("Kerakli bo'limni tanlang 👇", reply_markup=main_kb())
-        return
-    name = " ".join(message.text.split())
-    if len(name.split()) < 2 or not (5 <= len(name) <= 60) or any(ch.isdigit() for ch in name):
-        await message.answer("❗️ Iltimos, ism va familiyangizni to'liq yozing.\n<i>Masalan: Aliyev Jasur</i>")
-        return
-    cert = db.issue_cert(message.from_user.id, name.title(), random.choice(settings.prizes))
-    log.info("Sertifikat berildi: %s %s -> %s", cert_no(cert), name, cert["prize"])
-    await send_certificate(message, cert)
 
 
 async def log_updates(handler, event, data):

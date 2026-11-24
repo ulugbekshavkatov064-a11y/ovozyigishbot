@@ -365,6 +365,21 @@ async def cmd_reload(message: Message) -> None:
     await message.answer(f"✅ data.json qayta yuklandi. Qatnashuvchilar: {len(settings.candidates)}")
 
 
+@router.message(Command("reset"))
+async def cmd_reset(message: Message) -> None:
+    """Sinov ovozlarini tozalash: /reset TASDIQLAYMAN"""
+    if not is_admin(message.from_user.id):
+        return
+    if (message.text or "").split(maxsplit=1)[1:] != ["TASDIQLAYMAN"]:
+        await message.answer(
+            f"⚠️ Bu buyruq BARCHA ovozlarni o'chiradi (hozir: {db.total_votes()} ta).\n"
+            "Tasdiqlash uchun yozing: <code>/reset TASDIQLAYMAN</code>"
+        )
+        return
+    n = db.reset_votes()
+    await message.answer(f"🗑 {n} ta ovoz o'chirildi. Ovoz berish noldan boshlanadi.")
+
+
 @router.message(Command("admin"))
 async def cmd_admin(message: Message) -> None:
     if not is_admin(message.from_user.id):
@@ -374,7 +389,8 @@ async def cmd_admin(message: Message) -> None:
         "/result — 1-2-3 o'rinlar (Excel)\n"
         "/all — barcha ovozlar soni (matn + Excel)\n"
         "/stats — umumiy statistika\n"
-        "/reload — data.json ni qayta yuklash (yangi qatnashuvchilar)"
+        "/reload — data.json ni qayta yuklash (yangi qatnashuvchilar)\n"
+        "/reset — barcha ovozlarni o'chirish (sinovdan keyin)"
     )
 
 

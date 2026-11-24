@@ -113,6 +113,12 @@ class Database:
         # yashirilgan qatnashuvchi faqat ovozi bo'lsa ko'rsatiladi
         return [dict(r) for r in rows if r["id"] in active_ids or r["cnt"] > 0]
 
+    def reset_votes(self) -> int:
+        n = self.total_votes()
+        self.conn.execute("DELETE FROM votes")
+        self.conn.commit()
+        return n
+
     def total_votes(self, category: str | None = None) -> int:
         if category is None:
             return self.conn.execute("SELECT COUNT(*) FROM votes").fetchone()[0]

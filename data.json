@@ -7,6 +7,15 @@
     {"key": "ustoz", "name": "Ustozlar", "has_subjects": true},
     {"key": "mobilograf", "name": "Mobilograf"}
   ],
+  "prizes": [
+    "Hamshiralik kursiga 1 oy bepul vaucher",
+    "Robototexnika kursiga 1-oy uchun 50% chegirma",
+    "Kompyuter kursiga 1-oy uchun 50% chegirma",
+    "Koreys tili kursiga 1 oy bepul vaucher",
+    "Tarix faniga 1 oy bepul vaucher",
+    "Ona tili va adabiyot faniga 1 oy bepul vaucher",
+    "Biologiya va kimyo fanlariga 1 oy bepul vaucher"
+  ],
   "subjects": ["Matematika", "Ingliz tili", "Rus tili", "Ona tili", "Fizika", "Kimyo"],
   "candidates": [
     {"position": "manager", "name": "Aliyev Jasur", "branch": "Chilonzor filiali"},

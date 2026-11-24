@@ -21,6 +21,17 @@ CREATE TABLE IF NOT EXISTS settings (
     key   TEXT PRIMARY KEY,
     value TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS certificates (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id    INTEGER NOT NULL UNIQUE,
+    tg_name    TEXT,
+    username   TEXT,
+    full_name  TEXT,                 -- foydalanuvchi kiritgan ism familiya
+    prize      TEXT,
+    status     TEXT NOT NULL,        -- 'pending' (ism kutilmoqda) | 'issued'
+    created_at TEXT NOT NULL,
+    issued_at  TEXT
+);
 CREATE TABLE IF NOT EXISTS votes (
     id           INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id      INTEGER NOT NULL,
@@ -128,6 +139,40 @@ class Database:
             (key, value),
         )
         self.conn.commit()
+
+    # ---------- sertifikatlar ----------
+    def get_cert(self, user_id: int) -> sqlite3.Row | None:
+        return self.conn.execute("SELECT * FROM certificates WHERE user_id=?", (user_id,)).fetchone()
+
+    def start_cert(self, user_id: int, tg_name: str, username: str | None) -> None:
+        self.conn.execute(
+            """INSERT OR IGNORE INTO certificates (user_id, tg_name, username, status, created_at)
+               VALUES (?, ?, ?, 'pending', ?)""",
+            (user_id, tg_name, username, datetime.utcnow().isoformat(timespec="seconds")),
+        )
+        self.conn.commit()
+
+    def issue_cert(self, user_id: int, full_name: str, prize: str) -> sqlite3.Row:
+        self.conn.execute(
+            """UPDATE certificates SET full_name=?, prize=?, status='issued', issued_at=?
+               WHERE user_id=? AND status='pending'""",
+            (full_name, prize, datetime.utcnow().isoformat(timespec="seconds"), user_id),
+        )
+        self.conn.commit()
+        return self.get_cert(user_id)
+
+    def all_certs(self) -> list[sqlite3.Row]:
+        return self.conn.execute(
+            """SELECT c.*, (SELECT COUNT(*) FROM votes v WHERE v.user_id = c.user_id) AS votes_cnt
+               FROM certificates c ORDER BY c.id"""
+        ).fetchall()
+
+    def reset_certs(self) -> int:
+        n = self.conn.execute("SELECT COUNT(*) FROM certificates").fetchone()[0]
+        self.conn.execute("DELETE FROM certificates")
+        self.conn.execute("DELETE FROM sqlite_sequence WHERE name='certificates'")
+        self.conn.commit()
+        return n
 
     def reset_votes(self) -> int:
         n = self.total_votes()

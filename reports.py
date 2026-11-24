@@ -133,3 +133,41 @@ def _save(wb: Workbook) -> BytesIO:
     wb.save(buf)
     buf.seek(0)
     return buf
+
+
+def certs_excel(certs, s: Settings, cert_no, cert_date) -> BytesIO:
+    """/sertifikat: kimga qanday sertifikat berilgani."""
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Sertifikatlar"
+    ws.append(["№", "Sertifikat raqami", "Ism familiya", "Telegram ismi", "Username",
+               "Telegram ID", "Sovg'a", "Berilgan sana", "Ovoz bergan bo'limlar soni", "Holati"])
+    _style_header(ws, 10)
+    counts: dict[str, int] = {}
+    for i, c in enumerate(certs, start=1):
+        issued = c["status"] == "issued"
+        if issued:
+            counts[c["prize"]] = counts.get(c["prize"], 0) + 1
+        ws.append([
+            i,
+            cert_no(c) if issued else "—",
+            c["full_name"] or "—",
+            c["tg_name"] or "",
+            f"@{c['username']}" if c["username"] else "",
+            c["user_id"],
+            c["prize"] or "—",
+            cert_date(c) if issued else "—",
+            c["votes_cnt"],
+            "Berilgan" if issued else "Ism kiritilmagan",
+        ])
+    _autowidth(ws)
+
+    ws2 = wb.create_sheet("Sovg'alar bo'yicha")
+    ws2.append(["Sovg'a", "Soni"])
+    _style_header(ws2, 2)
+    for prize in s.prizes:
+        ws2.append([prize, counts.get(prize, 0)])
+    ws2.append(["JAMI", sum(counts.values())])
+    ws2[ws2.max_row][0].font = Font(bold=True)
+    _autowidth(ws2)
+    return _save(wb)

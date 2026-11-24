@@ -36,6 +36,8 @@ class Settings:
     positions: list[Position] = field(default_factory=list)
     subjects: list[str] = field(default_factory=list)
     candidates: list[dict] = field(default_factory=list)
+    prizes: list[str] = field(default_factory=list)
+    cert_org: str = ""
 
     def position(self, key: str) -> Position | None:
         return next((p for p in self.positions if p.key == key), None)
@@ -92,6 +94,7 @@ def load_settings() -> Settings:
         db_path=_db_path(),
         data_file=os.getenv("DATA_FILE", "data.json"),
     )
+    s.cert_org = os.getenv("CERT_ORG", "").strip()
     load_data(s)
     return s
 
@@ -117,4 +120,7 @@ def load_data(s: Settings) -> None:
             c.pop("subject", None)
         if not c.get("name") or not c.get("branch"):
             raise ValueError(f"ism yoki filial yo'q: {c}")
-    s.positions, s.subjects, s.candidates = positions, subjects, candidates
+    prizes = [p.strip() for p in data.get("prizes", []) if p.strip()]
+    if not prizes:
+        raise ValueError("data.json da 'prizes' (sovg'alar) ro'yxati bo'sh")
+    s.positions, s.subjects, s.candidates, s.prizes = positions, subjects, candidates, prizes

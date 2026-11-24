@@ -1,5 +1,7 @@
 import asyncio
 import logging
+import random
+from datetime import datetime, timezone
 from html import escape
 
 from aiogram import Bot, Dispatcher, F, Router
@@ -19,6 +21,7 @@ from aiogram.types import (
 )
 
 import reports
+from certificate import make_certificate
 from config import Settings, load_data, load_settings
 from db import Database, category_key
 
@@ -27,6 +30,7 @@ log = logging.getLogger("ovoz_bot")
 
 BTN_VOTE = "🗳 Ovoz berish"
 BTN_RESULTS = "📊 Natijalar"
+BTN_CERT = "🎁 Sertifikatim"
 
 settings: Settings = load_settings()
 log.info("Ma'lumotlar bazasi: %s", settings.db_path)
@@ -58,7 +62,10 @@ def fmt_dt(dt) -> str:
 
 def main_kb() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
-        keyboard=[[KeyboardButton(text=BTN_VOTE), KeyboardButton(text=BTN_RESULTS)]],
+        keyboard=[
+            [KeyboardButton(text=BTN_VOTE), KeyboardButton(text=BTN_RESULTS)],
+            [KeyboardButton(text=BTN_CERT)],
+        ],
         resize_keyboard=True,
     )
 
@@ -271,6 +278,58 @@ async def vote_candidate(call: CallbackQuery, bot: Bot) -> None:
         await call.answer("Siz bu bo'limga avval ovoz bergansiz", show_alert=True)
     text = head + reports.results_text(db, position, subject, title)
     await safe_edit(call, text, ikb([[("⬅️ Boshqa bo'limga ovoz berish", "v:back")]]))
+    await offer_certificate(call.message, u)
+
+
+# ======================= sovg'a sertifikati =======================
+ASK_NAME_TEXT = (
+    "🎁 <b>Tabriklaymiz!</b> Ovoz berganingiz uchun sizga <b>sovg'a sertifikati</b> beriladi.\n\n"
+    "Sertifikatga yozilishi uchun <b>ism va familiyangizni</b> yuboring.\n"
+    "<i>Masalan: Aliyev Jasur</i>"
+)
+
+
+async def offer_certificate(message: Message, user) -> None:
+    """Birinchi ovozdan keyin ism so'raladi (har bir odamga faqat 1 ta sertifikat)."""
+    cert = db.get_cert(user.id)
+    if cert is None:
+        db.start_cert(user.id, user.full_name, user.username)
+        await message.answer(ASK_NAME_TEXT)
+    elif cert["status"] == "pending":
+        await message.answer(ASK_NAME_TEXT)
+
+
+def cert_date(cert) -> str:
+    ts = cert["issued_at"] or cert["created_at"]
+    return datetime.fromisoformat(ts).replace(tzinfo=timezone.utc).astimezone(settings.tz).strftime("%d.%m.%Y")
+
+
+def cert_no(cert) -> str:
+    return f"OV-{cert['id']:05d}"
+
+
+async def send_certificate(message: Message, cert) -> None:
+    pdf = make_certificate(cert["full_name"], cert["prize"], cert_no(cert), cert_date(cert), settings.cert_org)
+    await message.answer_document(
+        BufferedInputFile(pdf.read(), filename=f"sertifikat_{cert_no(cert)}.pdf"),
+        caption=(
+            f"🎁 <b>Sizning sertifikatingiz</b>\n"
+            f"Sovg'a: <b>{escape(cert['prize'])}</b>\n"
+            f"Raqami: <code>{cert_no(cert)}</code>\n\n"
+            "⚠️ Ushbu sertifikat oila a'zolaringiz uchun amal qiladi. O'qiyotgan o'quvchilar uchun emas."
+        ),
+    )
+
+
+@router.message(F.text == BTN_CERT)
+async def my_certificate(message: Message) -> None:
+    cert = db.get_cert(message.from_user.id)
+    if cert is None:
+        await message.answer(f"Sertifikat olish uchun avval «{BTN_VOTE}» orqali ovoz bering.")
+    elif cert["status"] == "pending":
+        await message.answer(ASK_NAME_TEXT)
+    else:
+        await send_certificate(message, cert)
 
 
 # ======================= natijalar =======================
@@ -378,6 +437,19 @@ async def cmd_reload(message: Message) -> None:
     await message.answer(f"✅ data.json qayta yuklandi. Qatnashuvchilar: {len(settings.candidates)}")
 
 
+@router.message(Command("sertifikat"))
+async def cmd_certs(message: Message) -> None:
+    if not is_admin(message.from_user.id):
+        return
+    certs = db.all_certs()
+    buf = reports.certs_excel(certs, settings, cert_no, cert_date)
+    issued = sum(1 for c in certs if c["status"] == "issued")
+    await message.answer_document(
+        BufferedInputFile(buf.read(), filename=f"sertifikatlar_{settings.now():%Y-%m-%d_%H-%M}.xlsx"),
+        caption=f"🎁 Berilgan sertifikatlar: <b>{issued}</b> ta (ism kutilmoqda: {len(certs) - issued})",
+    )
+
+
 @router.message(Command("goo"))
 async def cmd_goo(message: Message) -> None:
     """Barcha ovozlarni o'chirib, ovoz berishni hozirdan boshlab qaytadan ochadi."""
@@ -386,6 +458,7 @@ async def cmd_goo(message: Message) -> None:
     await message.answer(
         f"⚠️ <b>Diqqat!</b>\n"
         f"• Barcha ovozlar o'chiriladi (hozir: <b>{db.total_votes()}</b> ta)\n"
+        f"• Barcha sertifikatlar o'chiriladi (hozir: <b>{len(db.all_certs())}</b> ta)\n"
         f"• Ovoz berish <b>hozirdan</b> boshlanadi va <b>{settings.vote_days} kun</b> davom etadi\n\n"
         "Davom etasizmi?",
         reply_markup=ikb([[("✅ Ha, boshlash", "goo:yes"), ("❌ Bekor qilish", "goo:no")]]),
@@ -403,6 +476,7 @@ async def goo_confirm(call: CallbackQuery) -> None:
         return
     from datetime import timedelta
     n = db.reset_votes()
+    nc = db.reset_certs()
     start = settings.now().replace(second=0, microsecond=0)
     end = start + timedelta(days=settings.vote_days)
     db.set_setting("vote_start", start.isoformat())
@@ -412,7 +486,7 @@ async def goo_confirm(call: CallbackQuery) -> None:
     await safe_edit(
         call,
         f"🚀 <b>Ovoz berish boshlandi!</b>\n"
-        f"🗑 O'chirilgan ovozlar: {n} ta\n"
+        f"🗑 O'chirilgan ovozlar: {n} ta, sertifikatlar: {nc} ta\n"
         f"🕐 Muddat: <b>{fmt_dt(settings.vote_start)}</b> — <b>{fmt_dt(settings.vote_end)}</b>",
     )
     await call.answer("Boshlandi ✅")
@@ -428,7 +502,8 @@ async def cmd_admin(message: Message) -> None:
         "/all — barcha ovozlar soni (matn + Excel)\n"
         "/stats — umumiy statistika\n"
         "/reload — data.json ni qayta yuklash (yangi qatnashuvchilar)\n"
-        "/goo — barcha ovozlarni o'chirib, ovoz berishni hozirdan qaytadan boshlash"
+        "/sertifikat — berilgan sertifikatlar ro'yxati (Excel)\n"
+        "/goo — barcha ovozlar va sertifikatlarni o'chirib, ovoz berishni hozirdan qaytadan boshlash"
     )
 
 
@@ -449,6 +524,22 @@ async def bot_added(event: ChatMemberUpdated, bot: Bot) -> None:
             await bot.send_message(admin_id, text)
         except Exception:  # noqa: BLE001
             pass
+
+
+# Bu handler eng oxirida turishi kerak: faqat ism kutilayotgan foydalanuvchilar uchun ishlaydi
+@router.message(F.text, ~F.text.startswith("/"))
+async def receive_cert_name(message: Message) -> None:
+    cert = db.get_cert(message.from_user.id)
+    if cert is None or cert["status"] != "pending":
+        await message.answer("Kerakli bo'limni tanlang 👇", reply_markup=main_kb())
+        return
+    name = " ".join(message.text.split())
+    if len(name.split()) < 2 or not (5 <= len(name) <= 60) or any(ch.isdigit() for ch in name):
+        await message.answer("❗️ Iltimos, ism va familiyangizni to'liq yozing.\n<i>Masalan: Aliyev Jasur</i>")
+        return
+    cert = db.issue_cert(message.from_user.id, name.title(), random.choice(settings.prizes))
+    log.info("Sertifikat berildi: %s %s -> %s", cert_no(cert), name, cert["prize"])
+    await send_certificate(message, cert)
 
 
 async def log_updates(handler, event, data):

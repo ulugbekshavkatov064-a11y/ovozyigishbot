@@ -487,20 +487,21 @@ async def main() -> None:
     log.info("Telegram serveriga ulanyapman...")
     try:
         me = None
-        for _ in range(10):
+        wait = 60
+        while me is None:
             try:
-                me = await asyncio.wait_for(bot.get_me(), timeout=60)
-                break
+                me = await asyncio.wait_for(bot.get_me(), timeout=90)
             except TelegramRetryAfter as e:
-                log.warning("Telegram %s soniya kutishni so'radi, kutyapman...", e.retry_after)
-                await asyncio.sleep(e.retry_after + 1)
+                # Cheklov tugashi uchun har safar uzoqroq kutamiz (60s -> 2 -> 4 -> 8 -> 15 daqiqa)
+                pause = max(e.retry_after + 1, wait)
+                log.warning("Telegram cheklovi (retry_after=%s). %s soniya kutib qayta urinaman...",
+                            e.retry_after, pause)
+                await asyncio.sleep(pause)
+                wait = min(wait * 2, 900)
             except Exception as e:  # noqa: BLE001
                 log.error("Telegramga ulanib bo'lmadi: %r", e)
                 log.error("Internet/VPN ni yoki BOT_TOKEN to'g'riligini tekshiring.")
                 return
-        if me is None:
-            log.error("Telegram cheklovi tugamadi. @BotFather da /revoke qilib yangi token oling.")
-            return
         log.info("✅ Ulandi: @%s. Endi botga /start yuboring.", me.username)
         info = await bot.get_webhook_info()
         if info.url:

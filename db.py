@@ -17,6 +17,10 @@ CREATE TABLE IF NOT EXISTS users (
     username   TEXT,
     first_seen TEXT
 );
+CREATE TABLE IF NOT EXISTS settings (
+    key   TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS votes (
     id           INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id      INTEGER NOT NULL,
@@ -112,6 +116,18 @@ class Database:
         active_ids = {r["id"] for r in self.get_candidates(position, subject)}
         # yashirilgan qatnashuvchi faqat ovozi bo'lsa ko'rsatiladi
         return [dict(r) for r in rows if r["id"] in active_ids or r["cnt"] > 0]
+
+    def get_setting(self, key: str) -> str | None:
+        row = self.conn.execute("SELECT value FROM settings WHERE key=?", (key,)).fetchone()
+        return row[0] if row else None
+
+    def set_setting(self, key: str, value: str) -> None:
+        self.conn.execute(
+            "INSERT INTO settings (key, value) VALUES (?, ?) "
+            "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+            (key, value),
+        )
+        self.conn.commit()
 
     def reset_votes(self) -> int:
         n = self.total_votes()

@@ -29,8 +29,21 @@ BTN_VOTE = "🗳 Ovoz berish"
 BTN_RESULTS = "📊 Natijalar"
 
 settings: Settings = load_settings()
+log.info("Ma'lumotlar bazasi: %s", settings.db_path)
 db = Database(settings.db_path)
 db.sync_candidates(settings.candidates)
+
+
+def apply_saved_period() -> None:
+    """/goo orqali belgilangan muddat bazada saqlanadi va .env dagidan ustun turadi."""
+    from datetime import datetime as _dt
+    s, e = db.get_setting("vote_start"), db.get_setting("vote_end")
+    if s and e:
+        settings.vote_start = _dt.fromisoformat(s).astimezone(settings.tz)
+        settings.vote_end = _dt.fromisoformat(e).astimezone(settings.tz)
+
+
+apply_saved_period()
 router = Router()
 
 
@@ -365,19 +378,44 @@ async def cmd_reload(message: Message) -> None:
     await message.answer(f"✅ data.json qayta yuklandi. Qatnashuvchilar: {len(settings.candidates)}")
 
 
-@router.message(Command("reset"))
-async def cmd_reset(message: Message) -> None:
-    """Sinov ovozlarini tozalash: /reset TASDIQLAYMAN"""
+@router.message(Command("goo"))
+async def cmd_goo(message: Message) -> None:
+    """Barcha ovozlarni o'chirib, ovoz berishni hozirdan boshlab qaytadan ochadi."""
     if not is_admin(message.from_user.id):
         return
-    if (message.text or "").split(maxsplit=1)[1:] != ["TASDIQLAYMAN"]:
-        await message.answer(
-            f"⚠️ Bu buyruq BARCHA ovozlarni o'chiradi (hozir: {db.total_votes()} ta).\n"
-            "Tasdiqlash uchun yozing: <code>/reset TASDIQLAYMAN</code>"
-        )
+    await message.answer(
+        f"⚠️ <b>Diqqat!</b>\n"
+        f"• Barcha ovozlar o'chiriladi (hozir: <b>{db.total_votes()}</b> ta)\n"
+        f"• Ovoz berish <b>hozirdan</b> boshlanadi va <b>{settings.vote_days} kun</b> davom etadi\n\n"
+        "Davom etasizmi?",
+        reply_markup=ikb([[("✅ Ha, boshlash", "goo:yes"), ("❌ Bekor qilish", "goo:no")]]),
+    )
+
+
+@router.callback_query(F.data.startswith("goo:"))
+async def goo_confirm(call: CallbackQuery) -> None:
+    if not is_admin(call.from_user.id):
+        await call.answer("Ruxsat yo'q", show_alert=True)
         return
+    if call.data == "goo:no":
+        await safe_edit(call, "Bekor qilindi.")
+        await call.answer()
+        return
+    from datetime import timedelta
     n = db.reset_votes()
-    await message.answer(f"🗑 {n} ta ovoz o'chirildi. Ovoz berish noldan boshlanadi.")
+    start = settings.now().replace(second=0, microsecond=0)
+    end = start + timedelta(days=settings.vote_days)
+    db.set_setting("vote_start", start.isoformat())
+    db.set_setting("vote_end", end.isoformat())
+    apply_saved_period()
+    log.info("/goo: %s ovoz o'chirildi, yangi muddat %s — %s", n, start, end)
+    await safe_edit(
+        call,
+        f"🚀 <b>Ovoz berish boshlandi!</b>\n"
+        f"🗑 O'chirilgan ovozlar: {n} ta\n"
+        f"🕐 Muddat: <b>{fmt_dt(settings.vote_start)}</b> — <b>{fmt_dt(settings.vote_end)}</b>",
+    )
+    await call.answer("Boshlandi ✅")
 
 
 @router.message(Command("admin"))
@@ -390,7 +428,7 @@ async def cmd_admin(message: Message) -> None:
         "/all — barcha ovozlar soni (matn + Excel)\n"
         "/stats — umumiy statistika\n"
         "/reload — data.json ni qayta yuklash (yangi qatnashuvchilar)\n"
-        "/reset — barcha ovozlarni o'chirish (sinovdan keyin)"
+        "/goo — barcha ovozlarni o'chirib, ovoz berishni hozirdan qaytadan boshlash"
     )
 
 

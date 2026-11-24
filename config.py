@@ -30,6 +30,7 @@ class Settings:
     vote_start: datetime
     vote_end: datetime
     results_admin_only: bool
+    vote_days: int
     db_path: str
     data_file: str
     positions: list[Position] = field(default_factory=list)
@@ -50,6 +51,18 @@ class Settings:
         if now > self.vote_end:
             return "after"
         return "open"
+
+
+def _db_path() -> str:
+    """Railway Volume ulangan bo'lsa, baza avtomatik o'sha diskda saqlanadi."""
+    path = os.getenv("DB_PATH", "votes.db").strip() or "votes.db"
+    volume = os.getenv("RAILWAY_VOLUME_MOUNT_PATH", "").strip()
+    if volume:
+        path = os.path.join(volume, os.path.basename(path))
+    folder = os.path.dirname(path)
+    if folder:
+        os.makedirs(folder, exist_ok=True)
+    return path
 
 
 def load_settings() -> Settings:
@@ -74,8 +87,9 @@ def load_settings() -> Settings:
         tz=tz,
         vote_start=_parse_dt(os.getenv("VOTE_START", "2026-12-01 00:00"), tz),
         vote_end=_parse_dt(os.getenv("VOTE_END", "2026-12-15 23:59"), tz).replace(second=59),
+        vote_days=int(os.getenv("VOTE_DAYS", "15")),
         results_admin_only=os.getenv("RESULTS_ADMIN_ONLY", "false").lower() in ("1", "true", "yes"),
-        db_path=os.getenv("DB_PATH", "votes.db"),
+        db_path=_db_path(),
         data_file=os.getenv("DATA_FILE", "data.json"),
     )
     load_data(s)
